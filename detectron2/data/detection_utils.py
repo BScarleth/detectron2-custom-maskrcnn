@@ -393,8 +393,16 @@ def annotations_to_instances(annos, image_size, mask_format="polygon"):
     target.gt_boxes = Boxes(boxes)
 
     classes = [int(obj["category_id"]) for obj in annos]
+    materials = [int(obj["material_id"]) for obj in annos]
+    colors = [int(obj["color_id"]) for obj in annos]
+
     classes = torch.tensor(classes, dtype=torch.int64)
+    materials = torch.tensor(materials, dtype=torch.int64)
+    colors = torch.tensor(colors, dtype=torch.int64)
+
     target.gt_classes = classes
+    target.gt_materials = materials
+    target.gt_colors = colors
 
     if len(annos) and "segmentation" in annos[0]:
         segms = [obj["segmentation"] for obj in annos]
@@ -463,9 +471,17 @@ def annotations_to_instances_rotated(annos, image_size):
     boxes = target.gt_boxes = RotatedBoxes(boxes)
     boxes.clip(image_size)
 
-    classes = [obj["category_id"] for obj in annos]
+    classes = [int(obj["category_id"]) for obj in annos]
+    materials = [int(obj["material_id"]) for obj in annos]
+    colors = [int(obj["color_id"]) for obj in annos]
+
     classes = torch.tensor(classes, dtype=torch.int64)
+    materials = torch.tensor(materials, dtype=torch.int64)
+    colors = torch.tensor(colors, dtype=torch.int64)
+
     target.gt_classes = classes
+    target.gt_materials = materials
+    target.gt_colors = colors
 
     return target
 

@@ -45,6 +45,8 @@ Naming convention:
 def fast_rcnn_inference(
     boxes: List[torch.Tensor],
     scores: List[torch.Tensor],
+    scores_materials: List[torch.Tensor],
+    scores_colors: List[torch.Tensor],
     image_shapes: List[Tuple[int, int]],
     score_thresh: float,
     nms_thresh: float,
@@ -77,14 +79,14 @@ def fast_rcnn_inference(
     """
     result_per_image = [
         fast_rcnn_inference_single_image(
-            boxes_per_image, scores_per_image, image_shape, score_thresh, nms_thresh, topk_per_image
+            boxes_per_image, scores_per_image, material_scores_per_image, color_scores_per_image, image_shape, score_thresh, nms_thresh, topk_per_image
         )
-        for scores_per_image, boxes_per_image, image_shape in zip(scores, boxes, image_shapes)
+        for scores_per_image, material_scores_per_image, color_scores_per_image, boxes_per_image, image_shape in zip(scores, scores_materials, scores_colors, boxes, image_shapes)
     ]
     return [x[0] for x in result_per_image], [x[1] for x in result_per_image]
 
 
-def _log_classification_stats(pred_logits, gt_classes, prefix="fast_rcnn"):
+def _log_classification_stats(pred_logits, gt_classes, pred_logits_m, gt_materials, pred_logits_c, gt_colors, prefix="fast_rcnn"):
     """
     Log the classification metrics to EventStorage.
 
@@ -93,30 +95,71 @@ def _log_classification_stats(pred_logits, gt_classes, prefix="fast_rcnn"):
         gt_classes: R labels
     """
     num_instances = gt_classes.numel()
-    if num_instances == 0:
+    num_instances_material = gt_materials.numel()
+    num_instances_colors = gt_colors.numel()
+
+    if num_instances == 0 or num_instances_material == 0 or num_instances_colors == 0:
         return
     pred_classes = pred_logits.argmax(dim=1)
     bg_class_ind = pred_logits.shape[1] - 1
 
+    pred_materials = pred_logits_m.argmax(dim=1)
+    bg_material_ind = pred_logits_m.shape[1] - 1
+
+    pred_colors = pred_logits_c.argmax(dim=1)
+    bg_color_ind = pred_logits_c.shape[1] - 1
+
+
     fg_inds = (gt_classes >= 0) & (gt_classes < bg_class_ind)
+    fg_inds_m = (gt_materials >= 0) & (gt_materials < bg_material_ind)
+    fg_inds_c = (gt_colors >= 0) & (gt_colors < bg_color_ind)
+
     num_fg = fg_inds.nonzero().numel()
+    num_fg_m = fg_inds_m.nonzero().numel()
+    num_fg_c = fg_inds_c.nonzero().numel()
+
     fg_gt_classes = gt_classes[fg_inds]
+    fg_gt_materials = gt_materials[fg_inds_m]
+    fg_gt_colors = gt_colors[fg_inds_c]
+
     fg_pred_classes = pred_classes[fg_inds]
+    fg_pred_materials = pred_materials[fg_inds_m]
+    fg_pred_colors = pred_colors[fg_inds_c]
 
     num_false_negative = (fg_pred_classes == bg_class_ind).nonzero().numel()
+    num_false_negative_m = (fg_pred_materials == bg_material_ind).nonzero().numel()
+    num_false_negative_c = (fg_pred_colors == bg_color_ind).nonzero().numel()
+
     num_accurate = (pred_classes == gt_classes).nonzero().numel()
+    num_accurate_m = (pred_materials == gt_materials).nonzero().numel()
+    num_accurate_c = (pred_colors == gt_colors).nonzero().numel()
+
     fg_num_accurate = (fg_pred_classes == fg_gt_classes).nonzero().numel()
+    fg_num_accurate_m = (fg_pred_materials == fg_gt_materials).nonzero().numel()
+    fg_num_accurate_c = (fg_pred_colors == fg_gt_colors).nonzero().numel()
 
     storage = get_event_storage()
     storage.put_scalar(f"{prefix}/cls_accuracy", num_accurate / num_instances)
+
+    storage.put_scalar(f"{prefix}/cls_accuracy_materials", num_accurate_m / num_instances_material)
+    storage.put_scalar(f"{prefix}/cls_accuracy_colors", num_accurate_c / num_instances_colors)
+
     if num_fg > 0:
         storage.put_scalar(f"{prefix}/fg_cls_accuracy", fg_num_accurate / num_fg)
         storage.put_scalar(f"{prefix}/false_negative", num_false_negative / num_fg)
+
+        storage.put_scalar(f"{prefix}/fg_cls_accuracy_materials", fg_num_accurate_m / num_fg_m)
+        storage.put_scalar(f"{prefix}/false_negative_materials", num_false_negative_m / num_fg_m)
+
+        storage.put_scalar(f"{prefix}/fg_cls_accuracy_colors", fg_num_accurate_c / num_fg_c)
+        storage.put_scalar(f"{prefix}/false_negative_colors", num_false_negative_c / num_fg_c)
 
 
 def fast_rcnn_inference_single_image(
     boxes,
     scores,
+    material_scores,
+    color_scores,
     image_shape: Tuple[int, int],
     score_thresh: float,
     nms_thresh: float,
@@ -137,8 +180,13 @@ def fast_rcnn_inference_single_image(
     if not valid_mask.all():
         boxes = boxes[valid_mask]
         scores = scores[valid_mask]
+        material_scores = material_scores[valid_mask]
+        color_scores = color_scores[valid_mask]
 
     scores = scores[:, :-1]
+    material_scores = material_scores[:, :-1]
+    color_scores = color_scores[:, :-1]
+
     num_bbox_reg_classes = boxes.shape[1] // 4
     # Convert to Boxes to use the `clip` function ...
     boxes = Boxes(boxes.reshape(-1, 4))
@@ -156,16 +204,21 @@ def fast_rcnn_inference_single_image(
     else:
         boxes = boxes[filter_mask]
     scores = scores[filter_mask]
+    material_scores = material_scores[filter_mask]
+    color_scores = color_scores[filter_mask]
 
     # 2. Apply NMS for each class independently.
     keep = batched_nms(boxes, scores, filter_inds[:, 1], nms_thresh)
     if topk_per_image >= 0:
         keep = keep[:topk_per_image]
-    boxes, scores, filter_inds = boxes[keep], scores[keep], filter_inds[keep]
+    boxes, scores, material_scores, color_scores, filter_inds = boxes[keep], scores[keep], material_scores[keep], color_scores[keep], filter_inds[keep]
 
     result = Instances(image_shape)
     result.pred_boxes = Boxes(boxes)
     result.scores = scores
+    result.material_scores = material_scores
+    result.color_scores = color_scores
+
     result.pred_classes = filter_inds[:, 1]
     return result, filter_inds[:, 0]
 
@@ -185,6 +238,8 @@ class FastRCNNOutputLayers(nn.Module):
         *,
         box2box_transform,
         num_classes: int,
+        num_materials: int,
+        num_colors: int,
         test_score_thresh: float = 0.0,
         test_nms_thresh: float = 0.5,
         test_topk_per_image: int = 100,
@@ -217,16 +272,27 @@ class FastRCNNOutputLayers(nn.Module):
         if isinstance(input_shape, int):  # some backward compatibility
             input_shape = ShapeSpec(channels=input_shape)
         self.num_classes = num_classes
+
+        self.num_materials = num_materials
+        self.num_colors = num_colores
+
         input_size = input_shape.channels * (input_shape.width or 1) * (input_shape.height or 1)
         # prediction layer for num_classes foreground classes and one background class (hence + 1)
         self.cls_score = nn.Linear(input_size, num_classes + 1)
+
+        self.material_score = nn.Linear(input_size, num_materials + 1)
+        self.color_score = nn.Linear(input_size, num_colors + 1)
+
         num_bbox_reg_classes = 1 if cls_agnostic_bbox_reg else num_classes
         box_dim = len(box2box_transform.weights)
         self.bbox_pred = nn.Linear(input_size, num_bbox_reg_classes * box_dim)
 
         nn.init.normal_(self.cls_score.weight, std=0.01)
+        nn.init.normal_(self.material_score.weight, std=0.01)
+        nn.init.normal_(self.color_score.weight, std=0.01)
+
         nn.init.normal_(self.bbox_pred.weight, std=0.001)
-        for l in [self.cls_score, self.bbox_pred]:
+        for l in [self.cls_score, self.bbox_pred, self.material_score, self.color_score]:
             nn.init.constant_(l.bias, 0)
 
         self.box2box_transform = box2box_transform
@@ -236,7 +302,7 @@ class FastRCNNOutputLayers(nn.Module):
         self.test_topk_per_image = test_topk_per_image
         self.box_reg_loss_type = box_reg_loss_type
         if isinstance(loss_weight, float):
-            loss_weight = {"loss_cls": loss_weight, "loss_box_reg": loss_weight}
+            loss_weight = {"loss_cls": loss_weight, "loss_box_reg": loss_weight, "loss_materials": loss_weight, "loss_colors": loss_weight}
         self.loss_weight = loss_weight
 
     @classmethod
@@ -246,6 +312,8 @@ class FastRCNNOutputLayers(nn.Module):
             "box2box_transform": Box2BoxTransform(weights=cfg.MODEL.ROI_BOX_HEAD.BBOX_REG_WEIGHTS),
             # fmt: off
             "num_classes"           : cfg.MODEL.ROI_HEADS.NUM_CLASSES,
+            "num_materials"         : cfg.MODEL.ROI_HEADS.NUM_MATERIALS,
+            "num_colors"            : cfg.MODEL.ROI_HEADS.NUM_COLORS,
             "cls_agnostic_bbox_reg" : cfg.MODEL.ROI_BOX_HEAD.CLS_AGNOSTIC_BBOX_REG,
             "smooth_l1_beta"        : cfg.MODEL.ROI_BOX_HEAD.SMOOTH_L1_BETA,
             "test_score_thresh"     : cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST,
@@ -273,7 +341,10 @@ class FastRCNNOutputLayers(nn.Module):
             x = torch.flatten(x, start_dim=1)
         scores = self.cls_score(x)
         proposal_deltas = self.bbox_pred(x)
-        return scores, proposal_deltas
+        material_scores = self.material_score(x)
+        color_scores = self.color_score(x)
+
+        return scores, proposal_deltas, material_scores, color_scores
 
     def losses(self, predictions, proposals):
         """
@@ -286,13 +357,23 @@ class FastRCNNOutputLayers(nn.Module):
         Returns:
             Dict[str, Tensor]: dict of losses
         """
-        scores, proposal_deltas = predictions
+        scores, proposal_deltas, material_scores, color_scores = predictions
 
         # parse classification outputs
         gt_classes = (
             cat([p.gt_classes for p in proposals], dim=0) if len(proposals) else torch.empty(0)
         )
-        _log_classification_stats(scores, gt_classes)
+
+        # parse classification material outputs
+        gt_materials = (
+            cat([p.gt_materials for p in proposals], dim=0) if len(proposals) else torch.empty(0)
+        )
+
+        # parse classification color outputs
+        gt_colors = (
+            cat([p.gt_colors for p in proposals], dim=0) if len(proposals) else torch.empty(0)
+        )
+        _log_classification_stats(scores, gt_classes, material_scores, gt_materials, color_scores, gt_colors)
 
         # parse box regression outputs
         if len(proposals):
@@ -314,6 +395,8 @@ class FastRCNNOutputLayers(nn.Module):
             "loss_box_reg": self.box_reg_loss(
                 proposal_boxes, gt_boxes, proposal_deltas, gt_classes
             ),
+            "loss_materials": cross_entropy(material_scores, gt_materials, reduction="mean"),
+            "loss_colors" : cross_entropy(color_scores, gt_colors, reduction="mean"),
         }
         return {k: v * self.loss_weight.get(k, 1.0) for k, v in losses.items()}
 
@@ -370,11 +453,14 @@ class FastRCNNOutputLayers(nn.Module):
             list[Tensor]: same as `fast_rcnn_inference`.
         """
         boxes = self.predict_boxes(predictions, proposals)
-        scores = self.predict_probs(predictions, proposals)
+        scores, scores_materials, scores_colors = self.predict_probs(predictions, proposals)
+
         image_shapes = [x.image_size for x in proposals]
         return fast_rcnn_inference(
             boxes,
             scores,
+            scores_materials,
+            scores_colors,
             image_shapes,
             self.test_score_thresh,
             self.test_nms_thresh,
@@ -456,7 +542,10 @@ class FastRCNNOutputLayers(nn.Module):
                 A list of Tensors of predicted class probabilities for each image.
                 Element i has shape (Ri, K + 1), where Ri is the number of proposals for image i.
         """
-        scores, _ = predictions
+        scores, proposal_deltas, material_scores, color_scores = predictions
+
         num_inst_per_image = [len(p) for p in proposals]
         probs = F.softmax(scores, dim=-1)
-        return probs.split(num_inst_per_image, dim=0)
+        probs_m = F.softmax(material_scores, dim=-1)
+        probs_c = F.softmax(color_scores, dim=-1)
+        return probs.split(num_inst_per_image, dim=0), probs_m.split(num_inst_per_image, dim=0), probs_c.split_c(num_inst_per_image, dim=0)
