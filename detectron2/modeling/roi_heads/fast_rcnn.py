@@ -160,6 +160,10 @@ def fast_rcnn_inference_single_image(
     # 1. Filter results based on detection scores. It can make NMS more efficient
     #    by filtering out low-confidence detections.
     filter_mask = scores > score_thresh  # R x K
+    filter_mask_m = material_scores > score_thresh  # R x K
+    filter_mask_c = color_scores > score_thresh  # R x K
+
+    print("filter", filter_mask.shape)
     # R' x 2. First column contains indices of the R predictions;
     # Second column contains indices of classes.
     filter_inds = filter_mask.nonzero()
@@ -167,15 +171,34 @@ def fast_rcnn_inference_single_image(
         boxes = boxes[filter_inds[:, 0], 0]
     else:
         boxes = boxes[filter_mask]
+    print(scores.shape, material_scores.shape)
     scores = scores[filter_mask]
+<<<<<<< Updated upstream
 
     print("RESULTS: ", scores.shape, material_scores.shape, color_scores.shape)
+=======
+    material_scores = material_scores[filter_mask_m]
+    color_scores = color_scores[filter_mask_c]
+    print(scores.shape, material_scores.shape)
+>>>>>>> Stashed changes
 
     # 2. Apply NMS for each class independently.
     keep = batched_nms(boxes, scores, filter_inds[:, 1], nms_thresh)
+    print(keep, keep.shape)
     if topk_per_image >= 0:
         keep = keep[:topk_per_image]
+<<<<<<< Updated upstream
     boxes, scores, material_scores, color_scores, filter_inds = boxes[keep], scores[keep], material_scores[keep], color_scores[keep] ,filter_inds[keep]
+=======
+
+    boxes = boxes[keep]
+    scores = scores[keep]
+    print("scores ", scores.shape)
+    print("materials ", material_scores.shape)
+    material_scores = material_scores[keep]
+    color_scores = color_scores[keep]
+    filter_inds = filter_inds[keep]
+>>>>>>> Stashed changes
 
     result = Instances(image_shape)
     result.pred_boxes = Boxes(boxes)
@@ -236,6 +259,13 @@ class FastRCNNOutputLayers(nn.Module):
         if isinstance(input_shape, int):  # some backward compatibility
             input_shape = ShapeSpec(channels=input_shape)
         self.num_classes = num_classes
+<<<<<<< Updated upstream
+=======
+
+        self.num_materials = num_materials
+        self.num_colors = num_colors
+
+>>>>>>> Stashed changes
         input_size = input_shape.channels * (input_shape.width or 1) * (input_shape.height or 1)
         # prediction layer for num_classes foreground classes and one background class (hence + 1)
         self.cls_score = nn.Linear(input_size, num_classes + 1)
@@ -465,7 +495,7 @@ class FastRCNNOutputLayers(nn.Module):
         """
         if not len(proposals):
             return []
-        scores, proposal_deltas = predictions
+        scores, proposal_deltas, material_scores, color_scores = predictions
         proposal_boxes = cat([p.proposal_boxes.tensor for p in proposals], dim=0)
         N, B = proposal_boxes.shape
         predict_boxes = self.box2box_transform.apply_deltas(
@@ -502,8 +532,12 @@ class FastRCNNOutputLayers(nn.Module):
         """
         if not len(proposals):
             return []
+<<<<<<< Updated upstream
         #_, proposal_deltas = predictions
         scores, proposal_deltas, material_scores, color_scores = predictions
+=======
+        scores, proposal_deltas, material_scores, color_scores  = predictions
+>>>>>>> Stashed changes
         num_prop_per_image = [len(p) for p in proposals]
         proposal_boxes = cat([p.proposal_boxes.tensor for p in proposals], dim=0)
         predict_boxes = self.box2box_transform.apply_deltas(
@@ -529,6 +563,12 @@ class FastRCNNOutputLayers(nn.Module):
         scores, proposal_deltas, material_scores, color_scores =  predictions
         num_inst_per_image = [len(p) for p in proposals]
         probs = F.softmax(scores, dim=-1)
+<<<<<<< Updated upstream
         probs_material = F.softmax(material_scores, dim=-1)
         probs_color = F.softmax(color_scores, dim=-1)
         return probs.split(num_inst_per_image, dim=0), probs_material.split(num_inst_per_image, dim=0), probs_color.split(num_inst_per_image, dim=0)
+=======
+        probs_m = F.softmax(material_scores, dim=-1)
+        probs_c = F.softmax(color_scores, dim=-1)
+        return probs.split(num_inst_per_image, dim=0), probs_m.split(num_inst_per_image, dim=0), probs_c.split(num_inst_per_image, dim=0)
+>>>>>>> Stashed changes
