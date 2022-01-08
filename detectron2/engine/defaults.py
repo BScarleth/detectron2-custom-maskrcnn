@@ -684,6 +684,7 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
         scale = num_workers / old_world_size
         bs = cfg.SOLVER.IMS_PER_BATCH = int(round(cfg.SOLVER.IMS_PER_BATCH * scale))
         lr = cfg.SOLVER.BASE_LR = cfg.SOLVER.BASE_LR * scale
+        print("lr --- ", lr)
         max_iter = cfg.SOLVER.MAX_ITER = int(round(cfg.SOLVER.MAX_ITER / scale))
         warmup_iter = cfg.SOLVER.WARMUP_ITERS = int(round(cfg.SOLVER.WARMUP_ITERS / scale))
         cfg.SOLVER.STEPS = tuple(int(round(s / scale)) for s in cfg.SOLVER.STEPS)
