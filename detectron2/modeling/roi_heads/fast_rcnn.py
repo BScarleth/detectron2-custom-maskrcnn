@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple, Union
 import torch
 from torch import nn
 from torch.nn import functional as F
+import numpy as np
 
 from detectron2.config import configurable
 from detectron2.layers import ShapeSpec, batched_nms, cat, cross_entropy, nonzero_tuple
@@ -140,8 +141,6 @@ def fast_rcnn_inference_single_image(
         Same as `fast_rcnn_inference`, but for only one image.
     """
     valid_mask = torch.isfinite(boxes).all(dim=1) & torch.isfinite(scores).all(dim=1)
-    valid_mask_m = torch.isfinite(boxes).all(dim=1) & torch.isfinite(material_scores).all(dim=1)
-    valid_mask_c = torch.isfinite(boxes).all(dim=1) & torch.isfinite(color_scores).all(dim=1)
 
     if not valid_mask.all():
         boxes = boxes[valid_mask]
@@ -160,10 +159,7 @@ def fast_rcnn_inference_single_image(
     # 1. Filter results based on detection scores. It can make NMS more efficient
     #    by filtering out low-confidence detections.
     filter_mask = scores > score_thresh  # R x K
-    filter_mask_m = material_scores > score_thresh  # R x K
-    filter_mask_c = color_scores > score_thresh  # R x K
 
-    print("filter", filter_mask.shape)
     # R' x 2. First column contains indices of the R predictions;
     # Second column contains indices of classes.
     filter_inds = filter_mask.nonzero()
@@ -171,42 +167,28 @@ def fast_rcnn_inference_single_image(
         boxes = boxes[filter_inds[:, 0], 0]
     else:
         boxes = boxes[filter_mask]
-    print(scores.shape, material_scores.shape)
-    scores = scores[filter_mask]
-<<<<<<< Updated upstream
 
-    print("RESULTS: ", scores.shape, material_scores.shape, color_scores.shape)
-=======
-    material_scores = material_scores[filter_mask_m]
-    color_scores = color_scores[filter_mask_c]
-    print(scores.shape, material_scores.shape)
->>>>>>> Stashed changes
+    scores = scores[filter_mask]
 
     # 2. Apply NMS for each class independently.
     keep = batched_nms(boxes, scores, filter_inds[:, 1], nms_thresh)
-    print(keep, keep.shape)
+
     if topk_per_image >= 0:
         keep = keep[:topk_per_image]
-<<<<<<< Updated upstream
-    boxes, scores, material_scores, color_scores, filter_inds = boxes[keep], scores[keep], material_scores[keep], color_scores[keep] ,filter_inds[keep]
-=======
+    keep_indx = keep // 3
 
-    boxes = boxes[keep]
-    scores = scores[keep]
-    print("scores ", scores.shape)
-    print("materials ", material_scores.shape)
-    material_scores = material_scores[keep]
-    color_scores = color_scores[keep]
-    filter_inds = filter_inds[keep]
->>>>>>> Stashed changes
+    boxes, scores, material_scores, color_scores, filter_inds = boxes[keep], scores[keep], material_scores[keep_indx], color_scores[keep_indx] ,filter_inds[keep]
+    material_scores = torch.max(material_scores, 1)
+    color_scores = torch.max(color_scores, 1)
 
     result = Instances(image_shape)
     result.pred_boxes = Boxes(boxes)
     result.scores = scores
-    result.material_scores = material_scores
-    result.color_scores = color_scores
+    result.material_scores = material_scores.values
+    result.color_scores = color_scores.values
     result.pred_classes = filter_inds[:, 1]
-
+    result.pred_materials = material_scores.indices
+    result.pred_colors = color_scores.indices
     return result, filter_inds[:, 0]
 
 
@@ -259,13 +241,10 @@ class FastRCNNOutputLayers(nn.Module):
         if isinstance(input_shape, int):  # some backward compatibility
             input_shape = ShapeSpec(channels=input_shape)
         self.num_classes = num_classes
-<<<<<<< Updated upstream
-=======
 
-        self.num_materials = num_materials
-        self.num_colors = num_colors
+        self.num_materials = num_material
+        self.num_colors = num_color
 
->>>>>>> Stashed changes
         input_size = input_shape.channels * (input_shape.width or 1) * (input_shape.height or 1)
         # prediction layer for num_classes foreground classes and one background class (hence + 1)
         self.cls_score = nn.Linear(input_size, num_classes + 1)
@@ -467,6 +446,7 @@ class FastRCNNOutputLayers(nn.Module):
             list[Tensor]: same as `fast_rcnn_inference`.
         """
         boxes = self.predict_boxes(predictions, proposals)
+        print("predictions: ", predictions)
         scores, materials, colors = self.predict_probs(predictions, proposals)
         image_shapes = [x.image_size for x in proposals]
         return fast_rcnn_inference(
@@ -532,12 +512,9 @@ class FastRCNNOutputLayers(nn.Module):
         """
         if not len(proposals):
             return []
-<<<<<<< Updated upstream
         #_, proposal_deltas = predictions
         scores, proposal_deltas, material_scores, color_scores = predictions
-=======
-        scores, proposal_deltas, material_scores, color_scores  = predictions
->>>>>>> Stashed changes
+
         num_prop_per_image = [len(p) for p in proposals]
         proposal_boxes = cat([p.proposal_boxes.tensor for p in proposals], dim=0)
         predict_boxes = self.box2box_transform.apply_deltas(
@@ -563,12 +540,6 @@ class FastRCNNOutputLayers(nn.Module):
         scores, proposal_deltas, material_scores, color_scores =  predictions
         num_inst_per_image = [len(p) for p in proposals]
         probs = F.softmax(scores, dim=-1)
-<<<<<<< Updated upstream
         probs_material = F.softmax(material_scores, dim=-1)
         probs_color = F.softmax(color_scores, dim=-1)
         return probs.split(num_inst_per_image, dim=0), probs_material.split(num_inst_per_image, dim=0), probs_color.split(num_inst_per_image, dim=0)
-=======
-        probs_m = F.softmax(material_scores, dim=-1)
-        probs_c = F.softmax(color_scores, dim=-1)
-        return probs.split(num_inst_per_image, dim=0), probs_m.split(num_inst_per_image, dim=0), probs_c.split(num_inst_per_image, dim=0)
->>>>>>> Stashed changes
