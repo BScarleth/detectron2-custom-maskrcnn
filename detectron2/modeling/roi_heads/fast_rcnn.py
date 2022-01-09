@@ -331,8 +331,6 @@ class FastRCNNOutputLayers(nn.Module):
         loss_materials = cross_entropy(material_scores, gt_materials, reduction="mean")
         loss_colors = cross_entropy(color_scores, gt_colors, reduction="mean")
 
-        print("Loss_materials -", loss_materials)
-        print("Loss_colors -", loss_colors)
 
         # create your optimizer
         optimizer_materials = optim.SGD(self.material_score.parameters(), lr=0.00025)
@@ -362,12 +360,20 @@ class FastRCNNOutputLayers(nn.Module):
         """
         #scores, proposal_deltas = predictions
         scores, proposal_deltas, material_scores, color_scores = predictions
-        self.losses_extra_features(predictions, proposals)
+        #self.losses_extra_features(predictions, proposals)
 
         # parse classification outputs
         gt_classes = (
             cat([p.gt_classes for p in proposals], dim=0) if len(proposals) else torch.empty(0)
         )
+        gt_materials = (
+            cat([p.gt_materials for p in proposals], dim=0) if len(proposals) else torch.empty(0)
+        )
+
+        gt_colors = (
+            cat([p.gt_colors for p in proposals], dim=0) if len(proposals) else torch.empty(0)
+        )
+
         _log_classification_stats(scores, gt_classes)
 
         # parse box regression outputs
@@ -390,6 +396,8 @@ class FastRCNNOutputLayers(nn.Module):
             "loss_box_reg": self.box_reg_loss(
                 proposal_boxes, gt_boxes, proposal_deltas, gt_classes
             ),
+            "loss_materials": cross_entropy(material_scores, gt_materials, reduction="mean"),
+            "loss_colors": cross_entropy(color_scores, gt_colors, reduction="mean")
         }
         return {k: v * self.loss_weight.get(k, 1.0) for k, v in losses.items()}
 
@@ -446,7 +454,6 @@ class FastRCNNOutputLayers(nn.Module):
             list[Tensor]: same as `fast_rcnn_inference`.
         """
         boxes = self.predict_boxes(predictions, proposals)
-        print("predictions: ", predictions)
         scores, materials, colors = self.predict_probs(predictions, proposals)
         image_shapes = [x.image_size for x in proposals]
         return fast_rcnn_inference(
