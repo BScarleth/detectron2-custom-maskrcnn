@@ -148,6 +148,15 @@ def fast_rcnn_inference_single_image(
     # 1. Filter results based on detection scores. It can make NMS more efficient
     #    by filtering out low-confidence detections.
     filter_mask = scores > score_thresh  # R x K
+
+    indices = []
+    indx = 0
+    for f in filter_mask:
+        if True in f:
+            indices.append(indx)
+        indx += 1
+    indices = torch.tensor(indices, dtype= torch.long)
+
     # R' x 2. First column contains indices of the R predictions;
     # Second column contains indices of classes.
     filter_inds = filter_mask.nonzero()
@@ -155,6 +164,8 @@ def fast_rcnn_inference_single_image(
         boxes = boxes[filter_inds[:, 0], 0]
     else:
         boxes = boxes[filter_mask]
+    scores_c = scores.clone().to("cpu")
+    scores_c = scores_c.index_select(0, indices)
     scores = scores[filter_mask]
 
     # 2. Apply NMS for each class independently.
@@ -163,9 +174,11 @@ def fast_rcnn_inference_single_image(
         keep = keep[:topk_per_image]
     boxes, scores, filter_inds = boxes[keep], scores[keep], filter_inds[keep]
 
+    scores_c = scores_c[keep]
     result = Instances(image_shape)
     result.pred_boxes = Boxes(boxes)
     result.scores = scores
+    result.probabilities = scores_c
     result.pred_classes = filter_inds[:, 1]
     return result, filter_inds[:, 0]
 
